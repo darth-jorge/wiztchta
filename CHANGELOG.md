@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Scopes: `Wiztchta.new(scope: "signup")` binds a challenge to one purpose, and
+  `Wiztchta.verify/2` (or `Wiztchta.Plug`) must be given the same scope, otherwise it
+  returns `{:error, :scope_mismatch}`. Matching is strict ("no scope" is its own value);
+  atoms and strings are equivalent. Mismatches don't consume the token. Tokens issued
+  by earlier versions count as unscoped.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added

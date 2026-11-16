@@ -23,6 +23,7 @@ third-party service.
   fill in. It's added automatically, with no friction for real users.
 - **Minimum fill time**: forms submitted faster than a person could fill
   them in (2 seconds by default) are rejected.
+- **Scopes**: a token solved for one form can't be used on another.
 - **Stateless**: each challenge travels as an encrypted, expiring token.
 - **Replay protection**: each token can only be used once. Used tokens are
   remembered in ETS by default, or in your own `Wiztchta.Store`.
@@ -121,6 +122,31 @@ end
 The field is hidden with an inline style. If your Content Security Policy
 blocks inline styles, hide it in your CSS instead:
 `.wiztchta-hp { position: absolute; left: -10000px; }`.
+
+## Scopes
+
+Give each form its own scope, so a token solved on an easy form (a newsletter)
+can't be reused on a valuable one (signup):
+
+```elixir
+# LiveView
+Wiztchta.new(scope: "signup")
+Wiztchta.verify(params, scope: "signup")
+```
+
+```heex
+<%!-- Controller-rendered form --%>
+<.wiztchta opts={[scope: "signup"]} />
+```
+
+```elixir
+plug Wiztchta.Plug, [scope: "signup"] when action in [:create]
+```
+
+Matching is strict: a scoped token verified without a scope (or the other way
+round) returns `{:error, :scope_mismatch}`, so a forgotten scope fails loudly
+instead of quietly accepting tokens from any form. A mismatch doesn't use up
+the token.
 
 ## Proof-of-work difficulty
 
