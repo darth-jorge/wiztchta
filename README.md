@@ -36,7 +36,7 @@ third-party service.
 
 ```elixir
 # mix.exs
-{:wiztchta, "~> 0.2"}
+{:wiztchta, "~> 0.3.0"}
 ```
 
 ```elixir
