@@ -117,6 +117,70 @@ defmodule WiztchtaTest do
     end
   end
 
+  describe "verify/2 scope" do
+    defp scoped(scope), do: Wiztchta.new(type: FixedChallenge, scope: scope)
+
+    test "accepts a token verified with its own scope" do
+      assert :ok = Wiztchta.verify(submit(scoped("signup"), "42"), scope: "signup")
+    end
+
+    test "treats atoms and strings as the same scope" do
+      assert :ok = Wiztchta.verify(submit(scoped(:signup), "42"), scope: "signup")
+      assert :ok = Wiztchta.verify(submit(scoped("signup"), "42"), scope: :signup)
+    end
+
+    test "rejects a token from another scope" do
+      assert {:error, :scope_mismatch} =
+               Wiztchta.verify(submit(scoped("newsletter"), "42"), scope: "signup")
+    end
+
+    test "is strict: a scoped token needs a scope, and an unscoped token can't have one" do
+      assert {:error, :scope_mismatch} = Wiztchta.verify(submit(scoped("signup"), "42"))
+
+      assert {:error, :scope_mismatch} =
+               Wiztchta.verify(submit(Wiztchta.new(type: FixedChallenge), "42"), scope: "signup")
+    end
+
+    test "a mismatch does not consume the token" do
+      challenge = scoped("signup")
+      assert {:error, :scope_mismatch} = Wiztchta.verify(submit(challenge, "42"), scope: "other")
+      assert :ok = Wiztchta.verify(submit(challenge, "42"), scope: "signup")
+    end
+
+    test "is checked before the answer, so it reveals nothing about it" do
+      assert {:error, :scope_mismatch} =
+               Wiztchta.verify(submit(scoped("newsletter"), "wrong"), scope: "signup")
+    end
+
+    test "tokens issued before scopes existed count as unscoped" do
+      legacy = %{
+        id: "legacy-" <> Integer.to_string(System.unique_integer([:positive])),
+        type: FixedChallenge,
+        secret: "42",
+        expires_at: System.system_time(:second) + 300
+      }
+
+      challenge = %Wiztchta.Challenge{
+        type: FixedChallenge,
+        public: %{},
+        token: Wiztchta.Token.encrypt(legacy, 300, [])
+      }
+
+      assert {:error, :scope_mismatch} = Wiztchta.verify(submit(challenge, "42"), scope: "signup")
+      assert :ok = Wiztchta.verify(submit(challenge, "42"))
+    end
+
+    test "rejects invalid scopes when creating and verifying" do
+      for bad <- ["", false, true, 123, %{}] do
+        assert_raise ArgumentError, ~r/:scope must be/, fn -> scoped(bad) end
+
+        assert_raise ArgumentError, ~r/:scope must be/, fn ->
+          Wiztchta.verify(submit(scoped("signup"), "42"), scope: bad)
+        end
+      end
+    end
+  end
+
   describe "verify/2 minimum fill time" do
     # Builds a token directly so tests can control issued_at without sleeping.
     defp token_issued(ms_ago) do
@@ -178,6 +242,7 @@ defmodule WiztchtaTest do
           :missing,
           :honeypot,
           :too_fast,
+          :scope_mismatch,
           :invalid_token,
           :expired,
           :already_used,

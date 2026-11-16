@@ -3,8 +3,8 @@ defmodule Wiztchta.PlugTest do
 
   import Plug.Test
 
-  defp call(params) do
-    conn(:post, "/contact", params) |> Wiztchta.Plug.call(Wiztchta.Plug.init([]))
+  defp call(params, opts \\ []) do
+    conn(:post, "/contact", params) |> Wiztchta.Plug.call(Wiztchta.Plug.init(opts))
   end
 
   test "assigns :ok for a valid submission without halting" do
@@ -13,6 +13,14 @@ defmodule Wiztchta.PlugTest do
 
     assert conn.assigns.wiztchta == :ok
     refute conn.halted
+  end
+
+  test "forwards the scope option to verify" do
+    challenge = Wiztchta.new(type: Wiztchta.Test.FixedChallenge, scope: "signup")
+    params = %{"wiztchta" => %{"token" => challenge.token, "response" => "42"}}
+
+    assert call(params, scope: "contact").assigns.wiztchta == {:error, :scope_mismatch}
+    assert call(params, scope: "signup").assigns.wiztchta == :ok
   end
 
   test "assigns the error for an invalid submission" do

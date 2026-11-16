@@ -59,6 +59,15 @@ defmodule Wiztchta.ComponentsTest do
     assert attr(doc, "#wiztchta-hp", "name") == "captcha[url]"
   end
 
+  test "passes the scope from opts into the generated challenge" do
+    doc = render_doc(type: Wiztchta.Test.FixedChallenge, opts: [scope: "signup"])
+    token = attr(doc, "#wiztchta-token", "value")
+    params = %{"token" => token, "response" => "42"}
+
+    assert {:error, :scope_mismatch} = Wiztchta.verify(params)
+    assert :ok = Wiztchta.verify(params, scope: "signup")
+  end
+
   test "rendered token verifies" do
     doc = render_doc(type: Wiztchta.Test.FixedChallenge)
     token = attr(doc, "#wiztchta-token", "value")

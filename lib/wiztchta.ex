@@ -35,6 +35,7 @@ defmodule Wiztchta do
           | :honeypot
           | :invalid_token
           | :expired
+          | :scope_mismatch
           | :too_fast
           | :already_used
           | :wrong_answer
@@ -47,6 +48,8 @@ defmodule Wiztchta do
     * `:type` - the `Wiztchta.Challenge` module to use. Defaults to the
       `:default_challenge` config.
     * `:max_age` - seconds until the challenge expires.
+    * `:scope` - what the challenge is for, e.g. `"signup"` (a string or
+      atom). `verify/2` must be given the same scope. See "Scopes" below.
     * Any other option is forwarded to the challenge's `c:Wiztchta.Challenge.generate/1`
       (for example `difficulty: 18` for `Wiztchta.Challenges.ProofOfWork`).
   """
@@ -60,6 +63,7 @@ defmodule Wiztchta do
       id: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false),
       type: type,
       secret: secret,
+      scope: scope!(opts),
       issued_at: System.system_time(:millisecond),
       expires_at: System.system_time(:second) + max_age
     }
@@ -78,6 +82,20 @@ defmodule Wiztchta do
   the challenge answer. A token is consumed on its first verification attempt
   that reaches the store, whether the answer is right or wrong, so render a
   fresh challenge after every submit.
+
+  ## Scopes
+
+  A scope ties a challenge to one purpose, so a token solved on an easy form
+  (say, a newsletter) can't be reused on a valuable one (say, signup):
+
+      Wiztchta.new(scope: "signup")
+      Wiztchta.verify(params, scope: "signup")
+
+  Matching is strict: the scopes must be equal, and "no scope" is a value of
+  its own. A scoped token verified without a scope (or the other way round)
+  returns `{:error, :scope_mismatch}`, so forgetting the scope in one place
+  fails loudly instead of silently accepting any token. Atoms and strings are
+  equivalent (`:signup` == `"signup"`). A mismatch doesn't consume the token.
 
   ## Minimum fill time
 
@@ -99,6 +117,7 @@ defmodule Wiztchta do
          :ok <- Honeypot.check(fields, opts),
          {:ok, token, response} <- token_and_response(fields),
          {:ok, payload} <- Token.decrypt(token, opts),
+         :ok <- check_scope(payload, opts),
          :ok <- check_min_time(payload, opts),
          :ok <- consume(payload, opts) do
       if payload.type.valid?(payload.secret, response, opts),
@@ -137,6 +156,29 @@ defmodule Wiztchta do
        do: {:ok, token, response}
 
   defp token_and_response(_fields), do: {:error, :missing}
+
+  # Tokens issued before 0.3.0 have no :scope key and count as "no scope".
+  defp check_scope(payload, opts) do
+    if Map.get(payload, :scope) == scope!(opts), do: :ok, else: {:error, :scope_mismatch}
+  end
+
+  defp scope!(opts) do
+    case Keyword.get(opts, :scope) do
+      nil ->
+        nil
+
+      scope when is_binary(scope) and scope != "" ->
+        scope
+
+      # Booleans are atoms too, but `scope: false` is a mistake, not a scope.
+      scope when is_atom(scope) and not is_boolean(scope) ->
+        Atom.to_string(scope)
+
+      other ->
+        raise ArgumentError,
+              ":scope must be a non-empty string or an atom, got: #{inspect(other)}"
+    end
+  end
 
   # Tokens issued before 0.2.0 have no issued_at; let them through.
   defp check_min_time(%{issued_at: issued_at}, opts) when is_integer(issued_at) do
