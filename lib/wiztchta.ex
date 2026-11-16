@@ -28,13 +28,15 @@ defmodule Wiztchta do
   Every option can also be passed per call to `new/1` and `verify/2`.
   """
 
-  alias Wiztchta.{Challenge, Config, Honeypot, Token}
+  alias Wiztchta.{Binding, Challenge, Config, Honeypot, Token}
 
   @type error ::
           :missing
           | :honeypot
           | :invalid_token
           | :expired
+          | :scope_mismatch
+          | :session_mismatch
           | :too_fast
           | :already_used
           | :wrong_answer
@@ -47,6 +49,10 @@ defmodule Wiztchta do
     * `:type` - the `Wiztchta.Challenge` module to use. Defaults to the
       `:default_challenge` config.
     * `:max_age` - seconds until the challenge expires.
+    * `:scope` - what the challenge is for, e.g. `"signup"` (a string or
+      atom). `verify/2` must be given the same scope. See "Scopes" below.
+    * `:bind` - the session binding. Automatic in controllers; see
+      `Wiztchta.Binding`. Pass `false` to opt out.
     * Any other option is forwarded to the challenge's `c:Wiztchta.Challenge.generate/1`
       (for example `difficulty: 18` for `Wiztchta.Challenges.ProofOfWork`).
   """
@@ -60,6 +66,8 @@ defmodule Wiztchta do
       id: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false),
       type: type,
       secret: secret,
+      scope: scope!(opts),
+      bind: Binding.resolve!(opts),
       issued_at: System.system_time(:millisecond),
       expires_at: System.system_time(:second) + max_age
     }
@@ -78,6 +86,27 @@ defmodule Wiztchta do
   the challenge answer. A token is consumed on its first verification attempt
   that reaches the store, whether the answer is right or wrong, so render a
   fresh challenge after every submit.
+
+  ## Scopes
+
+  A scope ties a challenge to one purpose, so a token solved on an easy form
+  (say, a newsletter) can't be reused on a valuable one (say, signup):
+
+      Wiztchta.new(scope: "signup")
+      Wiztchta.verify(params, scope: "signup")
+
+  Matching is strict: the scopes must be equal, and "no scope" is a value of
+  its own. A scoped token verified without a scope (or the other way round)
+  returns `{:error, :scope_mismatch}`, so forgetting the scope in one place
+  fails loudly instead of silently accepting any token. Atoms and strings are
+  equivalent (`:signup` == `"signup"`). A mismatch doesn't consume the token.
+
+  ## Session binding
+
+  Challenges are also tied to the visitor's session, automatically wherever
+  `protect_from_forgery` runs (controllers), and opt-in in LiveViews. A token
+  from another session returns `{:error, :session_mismatch}`. See
+  `Wiztchta.Binding`.
 
   ## Minimum fill time
 
@@ -99,6 +128,8 @@ defmodule Wiztchta do
          :ok <- Honeypot.check(fields, opts),
          {:ok, token, response} <- token_and_response(fields),
          {:ok, payload} <- Token.decrypt(token, opts),
+         :ok <- check_scope(payload, opts),
+         :ok <- check_binding(payload, opts),
          :ok <- check_min_time(payload, opts),
          :ok <- consume(payload, opts) do
       if payload.type.valid?(payload.secret, response, opts),
@@ -111,10 +142,26 @@ defmodule Wiztchta do
   @spec valid?(map, keyword) :: boolean
   def valid?(params, opts \\ []), do: verify(params, opts) == :ok
 
+  @doc """
+  The session binding for a LiveView session map, to pass as `:bind` to both
+  `new/1` and `verify/2`. See `Wiztchta.Binding`.
+
+      def mount(_params, session, socket) do
+        binding = Wiztchta.session_binding(session)
+        {:ok, assign(socket, binding: binding, challenge: Wiztchta.new(bind: binding))}
+      end
+  """
+  @spec session_binding(map) :: String.t() | nil
+  defdelegate session_binding(session), to: Binding, as: :from_session
+
   @doc "A human-readable message for a `verify/2` error."
   @spec error_message(error) :: String.t()
   def error_message(:missing), do: "Please complete the verification."
   def error_message(:expired), do: "The verification expired. Please try again."
+
+  def error_message(:session_mismatch),
+    do: "Your session changed. Please reload the page and try again."
+
   def error_message(:too_fast), do: "That was quick! Please wait a moment and try again."
   def error_message(:already_used), do: "The verification was already used. Please try again."
   def error_message(:wrong_answer), do: "The verification answer was incorrect. Please try again."
@@ -137,6 +184,36 @@ defmodule Wiztchta do
        do: {:ok, token, response}
 
   defp token_and_response(_fields), do: {:error, :missing}
+
+  # Tokens issued before 0.3.0 have no :bind key and count as unbound.
+  defp check_binding(payload, opts) do
+    if Binding.match?(Map.get(payload, :bind), Binding.resolve!(opts)),
+      do: :ok,
+      else: {:error, :session_mismatch}
+  end
+
+  # Tokens issued before 0.3.0 have no :scope key and count as "no scope".
+  defp check_scope(payload, opts) do
+    if Map.get(payload, :scope) == scope!(opts), do: :ok, else: {:error, :scope_mismatch}
+  end
+
+  defp scope!(opts) do
+    case Keyword.get(opts, :scope) do
+      nil ->
+        nil
+
+      scope when is_binary(scope) and scope != "" ->
+        scope
+
+      # Booleans are atoms too, but `scope: false` is a mistake, not a scope.
+      scope when is_atom(scope) and not is_boolean(scope) ->
+        Atom.to_string(scope)
+
+      other ->
+        raise ArgumentError,
+              ":scope must be a non-empty string or an atom, got: #{inspect(other)}"
+    end
+  end
 
   # Tokens issued before 0.2.0 have no issued_at; let them through.
   defp check_min_time(%{issued_at: issued_at}, opts) when is_integer(issued_at) do
