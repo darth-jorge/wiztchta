@@ -24,6 +24,8 @@ third-party service.
 - **Minimum fill time**: forms submitted faster than a person could fill
   them in (2 seconds by default) are rejected.
 - **Scopes**: a token solved for one form can't be used on another.
+- **Session binding**: a token solved in one browser session can't be used
+  from another. Automatic for controller forms.
 - **Stateless**: each challenge travels as an encrypted, expiring token.
 - **Replay protection**: each token can only be used once. Used tokens are
   remembered in ETS by default, or in your own `Wiztchta.Store`.
@@ -147,6 +149,37 @@ Matching is strict: a scoped token verified without a scope (or the other way
 round) returns `{:error, :scope_mismatch}`, so a forgotten scope fails loudly
 instead of quietly accepting tokens from any form. A mismatch doesn't use up
 the token.
+
+## Session binding
+
+Each challenge is tied to the visitor's browser session (through the secret
+`protect_from_forgery` already keeps in every Phoenix session), so tokens
+can't be solved in bulk in one place and used somewhere else. A token from
+another session returns `{:error, :session_mismatch}`.
+
+- **Controllers:** automatic. `<.wiztchta />`, `Wiztchta.new/1`,
+  `Wiztchta.verify/2` and `Wiztchta.Plug` bind whenever `protect_from_forgery`
+  ran in the request (the default `:browser` pipeline).
+- **LiveView:** opt-in, since a LiveView process has no request:
+
+  ```elixir
+  def mount(_params, session, socket) do
+    binding = Wiztchta.session_binding(session)
+    {:ok, assign(socket, binding: binding, challenge: Wiztchta.new(bind: binding))}
+  end
+
+  # on submit
+  Wiztchta.verify(params, bind: socket.assigns.binding)
+  ```
+
+  Do this too when a LiveView form posts to a controller (`phx-trigger-action`),
+  otherwise the controller rejects the unbound token.
+- **Opting out:** `bind: false` in `new/1`, `verify/2`, `<.wiztchta opts={...}>`
+  or `plug Wiztchta.Plug, bind: false`, on both sides.
+
+Phoenix renews the CSRF secret on login, so a form loaded before logging in
+and submitted after returns `:session_mismatch`; `Wiztchta.error_message/1`
+asks the person to reload.
 
 ## Proof-of-work difficulty
 

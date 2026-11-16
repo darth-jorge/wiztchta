@@ -13,6 +13,20 @@ All notable changes to this project are documented here. The format follows
   returns `{:error, :scope_mismatch}`. Matching is strict ("no scope" is its own value);
   atoms and strings are equivalent. Mismatches don't consume the token. Tokens issued
   by earlier versions count as unscoped.
+- Session binding: challenges are tied to the visitor's session (a hash of the
+  `protect_from_forgery` secret), so tokens can't be farmed in one session and used in
+  another; mismatches return `{:error, :session_mismatch}` without consuming the token.
+  Automatic wherever CSRF protection runs in the request (controllers); opt-in in
+  LiveViews with `Wiztchta.session_binding/1` and `bind:`; `bind: false` opts out.
+
+### Upgrade notes
+
+- Controller forms that were already open when you deploy (rendered by 0.2, so
+  unbound) return `:session_mismatch` until they expire (`max_age`, 5 minutes by default).
+- LiveView forms that post to a controller (`phx-trigger-action`) must create their
+  challenge with `bind: Wiztchta.session_binding(session)`, or use `bind: false`.
+- Calls to `Wiztchta.new/1` and `verify/2` in controllers now bind too; pass
+  `bind: false` to both if a token is created and verified in different sessions.
 
 ## [0.2.0] - 2026-11-13
 
