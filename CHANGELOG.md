@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
   another; mismatches return `{:error, :session_mismatch}` without consuming the token.
   Automatic wherever CSRF protection runs in the request (controllers); opt-in in
   LiveViews with `Wiztchta.session_binding/1` and `bind:`; `bind: false` opts out.
+- Adaptive difficulty: challenges issued per visitor are counted per fixed window
+  (`Wiztchta.RateLimiter`, ETS by default) and each doubling beyond `:rate_free` adds a
+  proof-of-work bit, capped at `:pow_max_difficulty`. Visitors are identified by an HMAC
+  of their IP (IPv6 grouped by /64) via the opt-in `Wiztchta.ClientKey` plug or
+  `Wiztchta.client_key/1` in LiveView. Challenge types receive the extra bits as
+  `:pressure`.
 
 ### Upgrade notes
 

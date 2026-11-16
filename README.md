@@ -26,6 +26,8 @@ third-party service.
 - **Scopes**: a token solved for one form can't be used on another.
 - **Session binding**: a token solved in one browser session can't be used
   from another. Automatic for controller forms.
+- **Adaptive difficulty**: visitors who request many challenges get harder
+  puzzles, so mass abuse gets expensive while nobody is blocked.
 - **Stateless**: each challenge travels as an encrypted, expiring token.
 - **Replay protection**: each token can only be used once. Used tokens are
   remembered in ETS by default, or in your own `Wiztchta.Store`.
@@ -210,6 +212,60 @@ Difficulty can't close the gap with bots that hash natively (several times
 faster than a browser), so it works best alongside the honeypot and minimum
 fill time.
 
+## Adaptive difficulty
+
+Each challenge issued to a visitor is counted per IP address over a 10-minute
+window. The first 5 cost nothing extra; after that each doubling adds one bit
+(twice the work), up to a cap. A person reloading a few times never notices;
+a bot loading hundreds of forms pays more for each one. Nobody is blocked.
+
+| Challenges in 10 min | Difficulty (default 16) | Work |
+|---|---|---|
+| 1–5 | 16 | 1× |
+| 6–10 | 17 | 2× |
+| 11–20 | 18 | 4× |
+| 21–40 | 19 | 8× |
+| 41+ | 20 (cap) | 16× |
+
+It's opt-in: without a visitor key nothing changes.
+
+**Controllers:** add the plug to your `:browser` pipeline.
+
+```elixir
+pipeline :browser do
+  # ...
+  plug Wiztchta.ClientKey
+end
+```
+
+**LiveView:** enable `:peer_data` on the socket and pass the key. `mount/3`
+runs twice (HTTP render, then connected), so only count the connected one:
+
+```elixir
+# endpoint.ex
+socket "/live", Phoenix.LiveView.Socket,
+  websocket: [connect_info: [:peer_data, session: @session_options]]
+```
+
+```elixir
+def mount(_params, _session, socket) do
+  client = if connected?(socket), do: Wiztchta.client_key(socket)
+  {:ok, assign(socket, client: client, challenge: Wiztchta.new(client: client))}
+end
+# and Wiztchta.new(client: socket.assigns.client) after each submit
+```
+
+**Behind a proxy or CDN** (Fly.io, Heroku, Cloudflare, a load balancer…) the
+connection comes from the proxy, so every visitor would share one counter. Set
+the real client IP first, e.g. with the [`remote_ip`](https://hex.pm/packages/remote_ip)
+plug before `Wiztchta.ClientKey`. In LiveView, compute it from
+`connect_info: [:x_headers]` and pass the IP tuple to `Wiztchta.client_key/1`.
+Never trust `X-Forwarded-For` blindly; clients can forge it.
+
+Privacy: IPv6 addresses are grouped by /64, and only an HMAC of the address
+(keyed with your secret) is stored, never the IP itself. Counts are per node
+by default; implement `Wiztchta.RateLimiter` for cluster-wide counts.
+
 ## Minimum fill time
 
 When a challenge is created, its issue time goes inside the encrypted token,
@@ -239,7 +295,11 @@ config :wiztchta,
   param: "wiztchta",                # form param name
   honeypot: true,                   # false disables the trap field
   honeypot_field: "website",        # trap field name
-  min_time: 2                       # seconds; 0 disables the minimum fill time
+  min_time: 2,                      # seconds; 0 disables the minimum fill time
+  rate_limiter: Wiztchta.RateLimiter.ETS,  # nil disables adaptive difficulty
+  rate_window: 600,                 # seconds per counting window
+  rate_free: 5,                     # challenges per window without extra work
+  pow_max_difficulty: 20            # cap for adaptive difficulty
 ```
 
 You can pass any of these per call too, for example

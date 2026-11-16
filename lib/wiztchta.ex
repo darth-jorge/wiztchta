@@ -28,7 +28,7 @@ defmodule Wiztchta do
   Every option can also be passed per call to `new/1` and `verify/2`.
   """
 
-  alias Wiztchta.{Binding, Challenge, Config, Honeypot, Token}
+  alias Wiztchta.{Adaptive, Binding, Challenge, Config, Honeypot, Token}
 
   @type error ::
           :missing
@@ -51,6 +51,8 @@ defmodule Wiztchta do
     * `:max_age` - seconds until the challenge expires.
     * `:scope` - what the challenge is for, e.g. `"signup"` (a string or
       atom). `verify/2` must be given the same scope. See "Scopes" below.
+    * `:client` - the visitor key for adaptive difficulty. Automatic with
+      the `Wiztchta.ClientKey` plug; see `Wiztchta.Adaptive`.
     * `:bind` - the session binding. Automatic in controllers; see
       `Wiztchta.Binding`. Pass `false` to opt out.
     * Any other option is forwarded to the challenge's `c:Wiztchta.Challenge.generate/1`
@@ -60,7 +62,7 @@ defmodule Wiztchta do
   def new(opts \\ []) do
     type = Keyword.get(opts, :type) || Config.get(:default_challenge, opts)
     max_age = Config.get(:max_age, opts)
-    {public, secret} = type.generate(opts)
+    {public, secret} = type.generate(Keyword.put(opts, :pressure, Adaptive.pressure(opts)))
 
     payload = %{
       id: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false),
@@ -153,6 +155,15 @@ defmodule Wiztchta do
   """
   @spec session_binding(map) :: String.t() | nil
   defdelegate session_binding(session), to: Binding, as: :from_session
+
+  @doc """
+  The visitor key for adaptive difficulty, from a `Plug.Conn`, a LiveView
+  socket (needs `connect_info: [:peer_data]`) or an IP tuple. Pass it as
+  `client:` to `new/1`. See `Wiztchta.ClientKey`.
+  """
+  @spec client_key(Plug.Conn.t() | Phoenix.LiveView.Socket.t() | :inet.ip_address() | nil) ::
+          String.t() | nil
+  defdelegate client_key(source), to: Wiztchta.ClientKey, as: :for
 
   @doc "A human-readable message for a `verify/2` error."
   @spec error_message(error) :: String.t()
