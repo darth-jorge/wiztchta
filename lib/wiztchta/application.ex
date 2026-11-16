@@ -5,7 +5,7 @@ defmodule Wiztchta.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [Wiztchta.Store.ETS]
+    children = [Wiztchta.Store.ETS, Wiztchta.RateLimiter.ETS]
     Supervisor.start_link(children, strategy: :one_for_one, name: Wiztchta.Supervisor)
   end
 end

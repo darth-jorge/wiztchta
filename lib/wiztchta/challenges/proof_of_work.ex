@@ -16,6 +16,9 @@ defmodule Wiztchta.Challenges.ProofOfWork do
       doubles the average work. Defaults to the `:pow_difficulty` config, or
       `16`. Raise it (e.g. to 18) on long forms, where solving finishes
       before the person does anyway; keep it low on quick forms.
+    * `:pressure` - extra bits from `Wiztchta.Adaptive`, set by `Wiztchta.new/1`.
+      The total never exceeds `:pow_max_difficulty` (default `20`), unless
+      `:difficulty` itself is higher.
   """
 
   @behaviour Wiztchta.Challenge
@@ -27,7 +30,9 @@ defmodule Wiztchta.Challenges.ProofOfWork do
   @impl true
   def generate(opts) do
     difficulty = Wiztchta.Config.get(:pow_difficulty, opts) || @default_difficulty
-    difficulty = opts |> Keyword.get(:difficulty, difficulty) |> validate_difficulty!()
+    base = opts |> Keyword.get(:difficulty, difficulty) |> validate_difficulty!()
+    cap = validate_difficulty!(Wiztchta.Config.get(:pow_max_difficulty, opts))
+    difficulty = min(base + Keyword.get(opts, :pressure, 0), max(base, cap))
     salt = Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
 
     {%{"salt" => salt, "difficulty" => difficulty}, {salt, difficulty}}

@@ -60,18 +60,23 @@ defmodule Demo.FormLive do
   alias Wiztchta.Challenges.{Math, ProofOfWork}
 
   def mount(_params, _session, socket) do
+    # mount/3 runs twice (HTTP render, then connected); only count the connected one.
+    client = if connected?(socket), do: Wiztchta.client_key(socket)
+
     {:ok,
      assign(socket,
        form: to_form(%{"email" => ""}, as: :signup),
        type: ProofOfWork,
-       challenge: Wiztchta.new(type: ProofOfWork),
+       client: client,
+       challenge: Wiztchta.new(type: ProofOfWork, client: client),
        result: nil
      )}
   end
 
   def handle_event("type", %{"type" => type}, socket) do
     type = if type == "math", do: Math, else: ProofOfWork
-    {:noreply, assign(socket, type: type, challenge: Wiztchta.new(type: type), result: nil)}
+    challenge = Wiztchta.new(type: type, client: socket.assigns.client)
+    {:noreply, assign(socket, type: type, challenge: challenge, result: nil)}
   end
 
   def handle_event("save", params, socket) do
@@ -80,7 +85,7 @@ defmodule Demo.FormLive do
     {:noreply,
      assign(socket,
        result: result,
-       challenge: Wiztchta.new(type: socket.assigns.type),
+       challenge: Wiztchta.new(type: socket.assigns.type, client: socket.assigns.client),
        form: to_form(params["signup"] || %{}, as: :signup)
      )}
   end
@@ -99,6 +104,9 @@ defmodule Demo.FormLive do
         <.wiztchta challenge={@challenge} id="signup-captcha" />
         <button type="submit" id="signup-submit">Sign up</button>
       </.form>
+      <p :if={@challenge.public["difficulty"]} id="difficulty">
+        Difficulty: {@challenge.public["difficulty"]} (reload a few times to watch it adapt)
+      </p>
       <.result result={@result} />
     </main>
     """
@@ -126,9 +134,12 @@ defmodule Demo.ClassicHTML do
       <.form for={%{}} as={:contact} id="contact-form" action="/classic">
         <label for="contact_message">Message</label>
         <textarea name="contact[message]" id="contact_message"></textarea>
-        <.wiztchta id="contact-captcha" type={Wiztchta.Challenges.ProofOfWork} />
+        <.wiztchta id="contact-captcha" challenge={@challenge} />
         <button type="submit" id="contact-submit">Send</button>
       </.form>
+      <p id="difficulty">
+        Difficulty: {@challenge.public["difficulty"]} (reload a few times to watch it adapt)
+      </p>
       <Demo.FormLive.result result={@result} />
     </main>
     """
@@ -144,7 +155,12 @@ defmodule Demo.ClassicController do
   def create(conn, _params), do: render_form(conn, conn.assigns.wiztchta)
 
   defp render_form(conn, result) do
-    conn |> put_view(html: Demo.ClassicHTML) |> render(:contact, result: result)
+    # ClientKey ran in this request, so the challenge adapts automatically.
+    challenge = Wiztchta.new(type: Wiztchta.Challenges.ProofOfWork)
+
+    conn
+    |> put_view(html: Demo.ClassicHTML)
+    |> render(:contact, result: result, challenge: challenge)
   end
 end
 
@@ -157,6 +173,7 @@ defmodule Demo.Router do
     plug :fetch_session
     plug :put_root_layout, html: {Demo.Layouts, :root}
     plug :protect_from_forgery
+    plug Wiztchta.ClientKey
   end
 
   scope "/" do
@@ -172,7 +189,8 @@ defmodule Demo.Endpoint do
 
   @session [store: :cookie, key: "_wiztchta_demo", signing_salt: "wiztchta-demo"]
 
-  socket "/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session]]
+  socket "/live", Phoenix.LiveView.Socket,
+    websocket: [connect_info: [:peer_data, session: @session]]
 
   plug Plug.Static, at: "/assets/phoenix", from: {:phoenix, "priv/static"}
   plug Plug.Static, at: "/assets/phoenix_live_view", from: {:phoenix_live_view, "priv/static"}

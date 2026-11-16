@@ -8,7 +8,11 @@ defmodule Wiztchta.Config do
     param: "wiztchta",
     honeypot: true,
     honeypot_field: "website",
-    min_time: 2
+    min_time: 2,
+    rate_limiter: Wiztchta.RateLimiter.ETS,
+    rate_window: 600,
+    rate_free: 5,
+    pow_max_difficulty: 20
   ]
 
   @doc "Reads `key` from per-call opts, then app env, then defaults."
